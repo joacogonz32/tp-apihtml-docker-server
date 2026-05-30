@@ -21,18 +21,52 @@
 #
 
 import os
+import socket
+from pathlib import Path
 from flask import Flask, request, jsonify
 import mysql.connector
 
 app = Flask(__name__)
 
+
+def load_env_file():
+    """Carga db.env para ejecuciones locales sin pisar variables ya definidas."""
+    candidate_paths = [
+        Path(__file__).resolve().parent / ".env",
+        Path(__file__).resolve().parent.parent / "db.env",
+    ]
+
+    for env_path in candidate_paths:
+        if not env_path.exists():
+            continue
+
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip())
+        return
+load_env_file()
+
+def get_db_host():
+    """Usa DB_HOST y cae a localhost cuando el hostname solo existe dentro de Docker."""
+    db_host = os.environ["DB_HOST"]
+    try:
+        socket.getaddrinfo(db_host, int(os.environ.get("DB_PORT", "3306")))
+        return db_host
+    except socket.gaierror:
+        return "127.0.0.1"
+
 def get_db_connection():
     """Crea y retorna una conexión a la base de datos MySQL"""
     return mysql.connector.connect(
-        host=os.environ["DB_HOST"],
+        host=get_db_host(),
         user=os.environ["DB_USER"],
         password=os.environ["DB_PASSWORD"],
         database=os.environ["DB_NAME"],
+        port=int(os.environ.get("DB_PORT", "3306")),
     )
 
 def init_db():
