@@ -1,0 +1,336 @@
+## Guía completa de comandos — De cero a producción
+
+---
+
+## 0. Instalación de Docker en Ubuntu
+
+sudo apt-get update
+    Actualiza la lista de paquetes disponibles en los repositorios de Ubuntu.
+
+sudo apt-get install -y ca-certificates curl gnupg
+    Instala herramientas necesarias para agregar repositorios externos de forma segura: ca-certificates para HTTPS, curl para descargar, gnupg para verificar firmas.
+
+sudo install -m 0755 -d /etc/apt/keyrings
+    Crea el directorio donde se guardarán las claves GPG de repositorios externos, con los permisos correctos.
+
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    Descarga la clave GPG oficial de Docker y la convierte al formato binario que apt entiende. Esto garantiza que los paquetes descargados son auténticos y no fueron modificados.
+
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+    Da permisos de lectura a todos los usuarios sobre esa clave.
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    Agrega el repositorio oficial de Docker a la lista de fuentes de apt, usando la arquitectura y versión de Ubuntu detectadas automáticamente.
+
+sudo apt-get update
+    Actualiza nuevamente la lista de paquetes, ahora incluyendo el repositorio de Docker recién agregado.
+
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    Instala Docker Engine y todos sus componentes:
+    - docker-ce           -> el motor de Docker
+    - docker-ce-cli       -> la herramienta de línea de comandos docker
+    - containerd.io       -> el runtime de contenedores
+    - docker-buildx-plugin -> plugin para builds avanzados
+    - docker-compose-plugin -> plugin de Docker Compose
+
+sudo systemctl start docker
+    Inicia el servicio (daemon) de Docker si no arrancó automáticamente.
+
+sudo systemctl enable docker
+    Configura Docker para que inicie automáticamente cada vez que se enciende la máquina.
+
+sudo usermod -aG docker $USER
+    Agrega tu usuario al grupo docker para poder ejecutar comandos Docker sin sudo. Requiere cerrar sesión y volver a entrar para que tome efecto.
+
+newgrp docker
+    Aplica el cambio de grupo en la sesión actual sin necesidad de cerrar sesión. Alternativa temporal al paso anterior.
+
+---
+
+## 1. Verificar instalación
+
+docker --version
+    Confirma que Docker está instalado. Debe mostrar algo como Docker version 27.x.x.
+
+docker run hello-world
+    Prueba de fuego: Docker descarga una imagen mínima, la ejecuta e imprime un mensaje de confirmación. Si esto funciona, todo está bien.
+
+docker ps
+    Lista contenedores corriendo actualmente. Confirma que el daemon de Docker responde. Si está vacío es normal, aún no levantamos nada.
+
+---
+
+## 2. Clonar el proyecto
+
+sudo apt-get install -y git
+    Instala Git si no está disponible.
+
+git clone https://github.com/joacogonz32/tp-apihtml-docker-server.git
+    Descarga el repositorio completo en un directorio local.
+
+cd tp-apihtml-docker-server
+    Entra al directorio del proyecto. Todos los comandos siguientes se ejecutan desde acá o desde sus subcarpetas.
+
+ls
+    Verifica el contenido: deberías ver db.env, README.md, python-flask/ y rust-actixweb/.
+
+---
+
+## 3. Crear la red Docker
+
+docker network create mired
+    Crea la red virtual privada mired de tipo bridge. Dentro de esta red los contenedores se encuentran entre sí usando el nombre del contenedor como hostname (por eso DB_HOST=db-mysql en el db.env).
+
+docker network ls
+    Lista todas las redes Docker. Verifica que mired aparece con driver bridge.
+
+---
+
+## 4. Levantar MySQL
+
+docker run -d \
+  --name db-mysql \
+  --network mired \
+  --env-file db.env \
+  -e MYSQL_ROOT_PASSWORD=alumnoipm \
+  -e MYSQL_DATABASE=tp-proyecto-docker_db \
+  -p 3306:3306 \
+  mysql:8.0
+    Descarga (si no la tiene) y arranca la imagen oficial de MySQL 8.0 como contenedor en segundo plano, conectado a la red mired, con las credenciales del db.env y la base de datos creada automáticamente.
+
+docker ps
+    Verifica que db-mysql aparece en la lista con status Up.
+
+docker logs db-mysql
+    Muestra los logs de MySQL. Esperá hasta ver la línea:
+        /usr/sbin/mysqld: ready for connections.
+    Eso indica que MySQL terminó de inicializar y está listo.
+
+docker logs -f db-mysql
+    Igual que el anterior pero en tiempo real (follow). Presioná Ctrl+C para salir sin detener el contenedor.
+
+---
+
+## 5. Stack Python + Flask
+
+### Construir la imagen
+
+cd python-flask
+    Entra al directorio del stack Flask. El docker build busca el Dockerfile en el directorio actual.
+
+docker build -t flask-backend .
+    Lee el Dockerfile, ejecuta cada instrucción y genera una imagen llamada flask-backend. El punto final . indica que el contexto de build es el directorio actual.
+
+docker images
+    Lista las imágenes locales. Deberías ver flask-backend recién creada.
+
+### Correr el contenedor
+
+docker run -d \
+  --name flask-app \
+  --network mired \
+  --env-file ../db.env \
+  -p 5000:5000 \
+  flask-backend
+    Arranca el contenedor Flask en segundo plano, conectado a mired (donde puede alcanzar a db-mysql), con las variables de entorno del db.env y el puerto 5000 expuesto al host.
+
+docker ps
+    Verifica que flask-app está corriendo.
+
+docker logs flask-app
+    Confirma que Flask arrancó sin errores. Deberías ver algo como:
+        * Running on all addresses (0.0.0.0)
+        * Running on http://127.0.0.1:5000
+
+### Testear endpoints Flask
+
+curl http://localhost:5000/health
+    Respuesta esperada: OK con código HTTP 200. Confirma que el servidor está vivo.
+
+curl http://localhost:5000/db-status
+    Flask ejecuta SELECT NOW() contra MySQL y devuelve la hora. Respuesta esperada:
+        {"status": "connected", "time": "2026-05-30 12:34:56"}
+    Si devuelve disconnected significa que Flask no puede alcanzar a MySQL (problema de red o MySQL aún no está listo).
+
+curl -X POST http://localhost:5000/items \
+  -H "Content-Type: application/json" \
+  -d '{"nombre": "item desde Flask"}'
+    Inserta un nuevo item en la tabla items. Respuesta esperada:
+        {"id": 1, "nombre": "item desde Flask"}
+
+curl -X POST http://localhost:5000/items \
+  -H "Content-Type: application/json" \
+  -d '{"nombre": "segundo item"}'
+    Inserta otro item para tener más datos.
+
+curl http://localhost:5000/items
+    Devuelve todos los items de la tabla. Respuesta esperada:
+        [
+          {"id": 1, "nombre": "item desde Flask", "created_at": "2026-05-30 12:34:56"},
+          {"id": 2, "nombre": "segundo item", "created_at": "2026-05-30 12:35:10"}
+        ]
+
+curl -X POST http://localhost:5000/items \
+  -H "Content-Type: application/json" \
+  -d '{}'
+    Prueba de validación: envía un body sin el campo nombre. Respuesta esperada con código 400:
+        {"error": "El campo 'nombre' es obligatorio"}
+
+---
+
+## 6. Stack Rust + Actix Web
+
+### Construir la imagen
+
+cd ../rust-actixweb
+    Entra al directorio del stack Rust.
+
+docker build -t actix-backend .
+    Construye la imagen usando el Dockerfile multi-stage. La primera vez tarda entre 5 y 15 minutos porque compila todo el código Rust a binario nativo. Los builds siguientes son rápidos gracias al caché de capas.
+
+docker build -t actix-backend . --progress=plain
+    Para ver el progreso en tiempo real. Muestra cada paso del build con sus salidas, en lugar del resumen compacto por defecto.
+
+docker images
+    Verifica que actix-backend fue creada. Notá que pesa mucho menos que flask-backend gracias al multi-stage build.
+
+### Correr el contenedor
+
+docker run -d \
+  --name actix-app \
+  --network mired \
+  --env-file ../db.env \
+  -p 8080:8080 \
+  actix-backend
+    Igual que Flask pero en el puerto 8080 y con la imagen de Rust.
+
+docker ps
+    Verifica los 3 contenedores corriendo: db-mysql, flask-app, actix-app.
+
+docker logs actix-app
+    Confirma que el servidor Rust arrancó. Deberías ver:
+        Servidor escuchando en 0.0.0.0:8080
+
+### Testear endpoints Rust
+
+curl http://localhost:8080/health
+    Respuesta esperada: OK.
+
+curl http://localhost:8080/db-status
+    Respuesta esperada:
+        {"status": "connected", "time": "2026-05-30 12:34:56"}
+
+curl -X POST http://localhost:8080/items \
+  -H "Content-Type: application/json" \
+  -d '{"nombre": "item desde Rust"}'
+    Respuesta esperada:
+        {"id": 3, "nombre": "item desde Rust"}
+    Notá que el id continúa desde donde lo dejó Flask (id 3), porque ambos backends comparten la misma base de datos.
+
+curl http://localhost:8080/items
+    Devuelve TODOS los items, incluidos los creados desde Flask. Esto demuestra que los dos stacks trabajan sobre la misma tabla MySQL.
+
+curl -X POST http://localhost:8080/items \
+  -H "Content-Type: application/json" \
+  -d '{"nombre": ""}'
+    Prueba de validación de Rust: nombre vacío. Respuesta esperada con código 400:
+        {"error": "El campo 'nombre' es obligatorio"}
+
+---
+
+## 7. Inspección y verificación avanzada
+
+docker network inspect mired
+    Muestra la configuración completa de la red mired, incluyendo la lista de contenedores conectados con sus IPs internas asignadas. Muy útil para mostrar visualmente cómo funciona el networking.
+
+docker stats
+    Muestra en tiempo real el uso de CPU, memoria, red y disco de todos los contenedores. Presioná Ctrl+C para salir.
+
+docker exec -it db-mysql mysql -u root -palumnoipm tp-proyecto-docker_db -e "SELECT * FROM items;"
+    Abre el cliente MySQL dentro del contenedor y ejecuta la query directamente. Demuestra que los datos insertados desde ambas APIs realmente están en la base de datos.
+    Desglose del comando:
+    - docker exec         -> ejecuta un comando dentro de un contenedor que ya está corriendo
+    - -it                 -> modo interactivo con terminal
+    - db-mysql            -> el contenedor donde ejecutar el comando
+    - mysql -u root -palumnoipm tp-proyecto-docker_db -> conectarse al cliente MySQL
+    - -e "SELECT * FROM items;" -> ejecutar esta query y salir
+
+docker exec -it db-mysql mysql -u root -palumnoipm tp-proyecto-docker_db -e "SHOW TABLES;"
+    Lista las tablas que existen en la base de datos.
+
+docker exec -it db-mysql mysql -u root -palumnoipm tp-proyecto-docker_db -e "DESCRIBE items;"
+    Muestra la estructura de la tabla items (columnas, tipos, constraints).
+
+---
+
+## 8. Limpiar todo
+
+docker stop flask-app actix-app db-mysql
+    Detiene los 3 contenedores de forma ordenada enviándoles la señal SIGTERM para que cierren conexiones limpiamente antes de terminar.
+
+docker rm flask-app actix-app db-mysql
+    Elimina los contenedores detenidos y libera sus nombres para poder recrearlos.
+
+docker network rm mired
+    Elimina la red virtual mired.
+
+docker rmi flask-backend actix-backend
+    Elimina las imágenes construidas localmente (opcional, liberan espacio en disco).
+
+---
+
+## Resumen del orden de ejecución
+
+# INSTALACIÓN (solo la primera vez)
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin
+sudo usermod -aG docker $USER
+newgrp docker
+
+# PROYECTO
+git clone https://github.com/joacogonz32/tp-apihtml-docker-server.git
+cd tp-apihtml-docker-server
+
+# RED
+docker network create mired
+
+# BASE DE DATOS
+docker run -d --name db-mysql --network mired --env-file db.env \
+  -e MYSQL_ROOT_PASSWORD=alumnoipm -e MYSQL_DATABASE=tp-proyecto-docker_db \
+  -p 3306:3306 mysql:8.0
+docker logs db-mysql   # esperar "ready for connections"
+
+# FLASK
+cd python-flask
+docker build -t flask-backend .
+docker run -d --name flask-app --network mired --env-file ../db.env -p 5000:5000 flask-backend
+
+# RUST (hacerlo con anticipación por el tiempo de compilación)
+cd ../rust-actixweb
+docker build -t actix-backend .
+docker run -d --name actix-app --network mired --env-file ../db.env -p 8080:8080 actix-backend
+
+# VERIFICAR
+docker ps
+docker network inspect mired
+
+# TESTEAR
+curl http://localhost:5000/health
+curl http://localhost:5000/db-status
+curl -X POST http://localhost:5000/items -H "Content-Type: application/json" -d '{"nombre": "item Flask"}'
+curl http://localhost:5000/items
+curl http://localhost:8080/health
+curl http://localhost:8080/db-status
+curl -X POST http://localhost:8080/items -H "Content-Type: application/json" -d '{"nombre": "item Rust"}'
+curl http://localhost:8080/items
+docker exec -it db-mysql mysql -u root -palumnoipm tp-proyecto-docker_db -e "SELECT * FROM items;"
