@@ -27,7 +27,7 @@ use sqlx::mysql::MySqlPoolOptions;
 use sqlx::{FromRow, MySqlPool};
 use std::env;
 
-// MODELOS 
+// MODELOS: define las estructuras de datos que se utilizan en la app
 
 #[derive(Serialize, Deserialize)]
 struct CreateItem {
@@ -38,7 +38,7 @@ struct CreateItem {
 struct Item {
     id: i32,
     nombre: String,
-    created_at: Option<chrono::NaiveDateTime>,
+    created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Serialize)]
@@ -53,13 +53,13 @@ struct DbStatusErr {
     error: String,
 }
 
-// ESTADO COMPARTIDO 
+// ESTADO COMPARTIDO: define la estructura a comapartir entre los handlers, en este caso el pool de conexiones a MySQL
 
 struct AppState {
     pool: MySqlPool,
 }
 
-// HANDLERS
+// HANDLERS: define las funciones que manejan las rutas de la API
 
 #[get("/health")]
 async fn health() -> impl Responder {
@@ -128,7 +128,7 @@ async fn get_items(data: web::Data<AppState>) -> impl Responder {
     }
 }
 
-// MAIN 
+// MAIN: arranca el programa y hace las conexiones necesarias para levantar el servidor y conectarse a la base de datos
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
@@ -148,7 +148,7 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("No se pudo conectar a MySQL");
 
-    // Crear tabla si no existe
+    // Crea la tabla si no existe
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS items (
             id INT AUTO_INCREMENT PRIMARY KEY,

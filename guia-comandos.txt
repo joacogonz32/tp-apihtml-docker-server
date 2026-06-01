@@ -98,7 +98,7 @@ docker run -d \
   --env-file db.env \
   -e MYSQL_ROOT_PASSWORD=alumnoipm \
   -e MYSQL_DATABASE=tp-proyecto-docker_db \
-  -p 3306:3306 \
+  -p 3307:3306 \
   mysql:8.0
     Descarga (si no la tiene) y arranca la imagen oficial de MySQL 8.0 como contenedor en segundo plano, conectado a la red mired, con las credenciales del db.env y la base de datos creada automáticamente.
 
@@ -307,7 +307,7 @@ docker network create mired
 # BASE DE DATOS
 docker run -d --name db-mysql --network mired --env-file db.env \
   -e MYSQL_ROOT_PASSWORD=alumnoipm -e MYSQL_DATABASE=tp-proyecto-docker_db \
-  -p 3306:3306 mysql:8.0
+  -p 3307:3306 mysql:8.0
 docker logs db-mysql   # esperar "ready for connections"
 
 # FLASK
