@@ -68,14 +68,14 @@ async fn health() -> impl Responder {
 
 #[get("/db-status")]
 async fn db_status(data: web::Data<AppState>) -> impl Responder {
-    let result = sqlx::query_scalar::<_, String>("SELECT NOW()")
+    let result = sqlx::query_scalar::<_, chrono::NaiveDateTime>("SELECT NOW()")
         .fetch_one(&data.pool)
         .await;
 
     match result {
         Ok(time) => HttpResponse::Ok().json(DbStatusOk {
             status: "connected".to_string(),
-            time,
+            time: time.to_string(),
         }),
         Err(e) => HttpResponse::InternalServerError().json(DbStatusErr {
             status: "disconnected".to_string(),

@@ -1,7 +1,7 @@
 # Dockerfile: Rust + Actix Web (Multi-Stage)
 
 # Etapa 1: Builder
-FROM rust:1.87-bookworm AS builder
+FROM rust:latest AS builder
 
 WORKDIR /app
 
